@@ -1,5 +1,4 @@
 # asthma-backend/main.py
-
 from fastapi import FastAPI, Depends, HTTPException, status, Query, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
@@ -7,21 +6,21 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, desc, text, inspect
 from typing import List, Optional
 
-import auth, database, models, schemas
 import os
 import datetime
-from database import engine
-from ml.predictor import get_predictor
-import firebase_messaging
 
-# OTP service
-from otp_service import (
+from app import auth, database, models, schemas
+from app.database import engine
+from app.otp_service import (
     generate_otp,
     store_otp,
     verify_otp,
     clear_otp,
     send_otp_email
 )
+
+from ml.predictor import get_predictor
+import app.firebase_messaging as firebase_messaging
 from fastapi import BackgroundTasks
 
 # Create all database tables on startup

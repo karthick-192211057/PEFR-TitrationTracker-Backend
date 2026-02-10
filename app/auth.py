@@ -9,7 +9,7 @@ from pydantic import EmailStr
 from sqlalchemy.orm import Session
 from typing import Optional # <-- THIS LINE WAS ADDED
 
-import database, models, schemas  # <-- CORRECTED IMPORT
+from app import database, models, schemas  # <-- CORRECTED IMPORT
 
 # --- Configuration ---
 

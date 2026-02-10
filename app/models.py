@@ -2,7 +2,7 @@
 
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Float, DateTime, Enum as SAEnum
 from sqlalchemy.orm import relationship
-from database import Base
+from app.database import Base
 import datetime
 import enum
 

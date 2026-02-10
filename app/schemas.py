@@ -3,7 +3,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
-from models import UserRole
+from app.models import UserRole
 
 # --- Config for all schemas ---
 class ConfigBase:

@@ -21,6 +21,9 @@ otp_store = {}
 
 # Load .env in project root (if present) so SMTP credentials can be provided via a file
 _here = os.path.dirname(__file__)
+_project_root = os.path.dirname(_here)  # Go up from app/ to project root
+load_dotenv(os.path.join(_project_root, '.env'))
+# Also try loading from app directory as fallback
 load_dotenv(os.path.join(_here, '.env'))
 
 

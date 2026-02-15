@@ -9,9 +9,9 @@ from typing import List, Optional
 import os
 import datetime
 
-from app import auth, database, models, schemas
-from app.database import engine
-from app.otp_service import (
+from . import auth, database, models, schemas
+from .database import engine
+from .otp_service import (
     generate_otp,
     store_otp,
     verify_otp,
@@ -20,7 +20,7 @@ from app.otp_service import (
 )
 
 from ml.predictor import get_predictor
-import app.firebase_messaging as firebase_messaging
+from . import firebase_messaging
 from fastapi import BackgroundTasks
 
 # Create all database tables on startup
@@ -168,14 +168,51 @@ def signup_send_otp(user: schemas.UserCreate, background_tasks: BackgroundTasks,
     if force_dev or not (smtp_user and smtp_pass):
         if not (smtp_user and smtp_pass):
             # warn in logs that SMTP isn't configured
-            print("[auth] SMTP not configured; returning OTP in response for testing")
+            print("[auth] SMTP not configured; printing OTP for developer")
         else:
-            print("[auth] OTP_FORCE_DEV_RETURN enabled; returning OTP in response")
-        return {"message": "OTP generated (dev mode)", "otp": otp}
+            print("[auth] OTP_FORCE_DEV_RETURN enabled; printing OTP for developer")
+        print(f"[auth] OTP for {user.email if 'user' in locals() else email}: {otp}")
+        return {"message": "OTP generated (dev mode)"}
 
     # send email in background so response isn't delayed
     background_tasks.add_task(send_otp_email, user.email, otp, "Signup Verification")
     return {"message": "OTP sent to email"}
+
+
+# 🔹 RESEND SIGNUP OTP
+@app.post("/auth/resend-signup-otp")
+def resend_signup_otp(email: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+    """Resend OTP for signup if user didn't receive it."""
+    if email not in otp_store:
+        return JSONResponse(status_code=400, content={"error": "No OTP found for this email. Please start signup again."})
+    
+    data = otp_store[email]
+    if data["purpose"] != "signup":
+        return JSONResponse(status_code=400, content={"error": "This email was not registered for signup."})
+    
+    otp = generate_otp()
+    store_otp(
+        email=email,
+        otp=otp,
+        purpose="signup",
+        payload=data.get("payload")
+    )
+    
+    # Check if SMTP is configured
+    force_dev = os.getenv("OTP_FORCE_DEV_RETURN", "false").lower() in ("1", "true", "yes")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    
+    if force_dev or not (smtp_user and smtp_pass):
+        if not (smtp_user and smtp_pass):
+            print("[auth] SMTP not configured; printing OTP for developer")
+        else:
+            print("[auth] OTP_FORCE_DEV_RETURN enabled; printing OTP for developer")
+        print(f"[auth] OTP for {email}: {otp}")
+        return {"message": "OTP regenerated (dev mode)"}    
+    # Send email in background
+    background_tasks.add_task(send_otp_email, email, otp, "Signup Verification")
+    return {"message": "OTP resent to email"}
 
 
 # 🔹 VERIFY OTP → CREATE USER
@@ -260,15 +297,48 @@ def forgot_password(
     smtp_pass = os.getenv("SMTP_PASS")
     if force_dev or not (smtp_user and smtp_pass):
         if not (smtp_user and smtp_pass):
-            print("[auth] SMTP not configured; returning OTP in response for testing")
+            print("[auth] SMTP not configured; printing OTP for developer")
         else:
-            print("[auth] OTP_FORCE_DEV_RETURN enabled; returning OTP in response")
-        return {"message": "OTP generated (dev mode)", "otp": otp}
+            print("[auth] OTP_FORCE_DEV_RETURN enabled; printing OTP for developer")
+        # never include the OTP in the HTTP response – keep it in the log only
+        print(f"[auth] OTP for {email}: {otp}")
+        return {"message": "OTP generated (dev mode)"}
 
     # schedule sending in background so API responds quickly
     background_tasks.add_task(send_otp_email, email, otp, "Password Reset")
 
     return {"message": "OTP sent to email"}
+
+
+# 🔹 RESEND FORGOT PASSWORD OTP
+@app.post("/auth/resend-forgot-password-otp")
+def resend_forgot_password_otp(email: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+    """Resend OTP for password reset if user didn't receive it."""
+    if email not in otp_store:
+        return JSONResponse(status_code=400, content={"error": "No OTP found for this email. Please request a password reset again."})
+    
+    data = otp_store[email]
+    if data["purpose"] != "forgot":
+        return JSONResponse(status_code=400, content={"error": "This email was not registered for password reset."})
+    
+    otp = generate_otp()
+    store_otp(email, otp, "forgot")
+    
+    # Check if SMTP is configured
+    force_dev = os.getenv("OTP_FORCE_DEV_RETURN", "false").lower() in ("1", "true", "yes")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    
+    if force_dev or not (smtp_user and smtp_pass):
+        if not (smtp_user and smtp_pass):
+            print("[auth] SMTP not configured; printing OTP for developer")
+        else:
+            print("[auth] OTP_FORCE_DEV_RETURN enabled; printing OTP for developer")
+        print(f"[auth] OTP for {email}: {otp}")
+        return {"message": "OTP regenerated (dev mode)"}    
+    # Send email in background
+    background_tasks.add_task(send_otp_email, email, otp, "Password Reset")
+    return {"message": "OTP resent to email"}
 
 
 # 🔹 RESET PASSWORD → VERIFY OTP
@@ -689,16 +759,21 @@ def link_patient_to_doctor(
     if current_user.role != models.UserRole.PATIENT:
         raise HTTPException(status_code=403, detail="Only patients can link to a doctor.")
 
-    doctor = db.query(models.User).filter(
-        models.User.email == link_request.doctor_email,
-        models.User.role == models.UserRole.DOCTOR
+    # Check if user exists with that email
+    user_with_email = db.query(models.User).filter(
+        models.User.email == link_request.doctor_email
     ).first()
+    
+    if not user_with_email:
+        raise HTTPException(status_code=404, detail=f"No user found with email {link_request.doctor_email}. Please check the email address.")
+    
+    # Check if user is a doctor
+    if user_with_email.role != models.UserRole.DOCTOR:
+        raise HTTPException(status_code=400, detail=f"User with email {link_request.doctor_email} is registered as {user_with_email.role.value}, not as a Doctor. Please ask them to register as a Doctor.")
 
-    if not doctor:
-        raise HTTPException(status_code=404, detail="Doctor not found with that email.")
-
+    # Check if link already exists
     existing_link = db.query(models.DoctorPatient).filter(
-        models.DoctorPatient.doctor_id == doctor.id,
+        models.DoctorPatient.doctor_id == user_with_email.id,
         models.DoctorPatient.patient_id == current_user.id
     ).first()
 
@@ -706,14 +781,14 @@ def link_patient_to_doctor(
         return existing_link
 
     db_link = models.DoctorPatient(
-        doctor_id=doctor.id,
+        doctor_id=user_with_email.id,
         patient_id=current_user.id
     )
     db.add(db_link)
     db.commit()
     db.refresh(db_link)
 
-    log_audit(db, current_user.id, "LINK_DOCTOR", f"Patient linked to doctor ID {doctor.id}")
+    log_audit(db, current_user.id, "LINK_DOCTOR", f"Patient linked to doctor ID {user_with_email.id}")
     db.commit()
 
     return db_link

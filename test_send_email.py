@@ -1,6 +1,10 @@
 import os
 import smtplib
 from email.mime.text import MIMEText
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
 
 SMTP_HOST = os.getenv('SMTP_HOST') or 'smtp.gmail.com'
 SMTP_PORT = int(os.getenv('SMTP_PORT') or 587)
